@@ -9,30 +9,27 @@ import SpriteKit
 import CoreMotion
 
 class GameScene: SKScene {
-    let motionManager = CMMotionManager() // 加速度センサーの管理
-    var faucet: SKLabelNode!              // 蛇口（🚰）
-    var drain: SKLabelNode!               // 排水口（🌀）
-    var selectedNode: SKNode?             // ドラッグ中のオブジェクト
+    let motionManager = CMMotionManager() // 加速度センサー（スマホの傾き）
+    var faucet: SKLabelNode!              // 初期配置の蛇口
+    var drain: SKLabelNode!               // 渦巻き（排水口）
+    var selectedNode: SKNode?             // 選択中のパーツ
     
-    // 回転操作用の初期値
-    var initialTouchAngle: CGFloat = 0
-    var initialNodeRotation: CGFloat = 0
+    var initialTouchAngle: CGFloat = 0    // 回転用：開始角度
+    var initialNodeRotation: CGFloat = 0 // 回転用：パーツの初期角度
 
     override func didMove(to view: SKView) {
         self.backgroundColor = .black
         
-        // 画面の縁に物理的な壁を設定
+        // 画面の端に物理的な壁を作り、パーツが落ちないようにする
         self.physicsBody = SKPhysicsBody(edgeLoopFrom: self.frame)
         
-        setupStaticNodes()     // 常設パーツの配置
-        setupInteractiveUI()   // 操作ボタンなどの配置
-        startGravityUpdates()  // 重力センサー開始
-        startWaterFlow()       // 水の生成開始
+        setupStaticNodes()     // 蛇口・渦巻きの初期配置
+        startGravityUpdates()  // 重力シミュレーション開始
+        startWaterFlow()       // 水の生成ループ開始
     }
     
-    // --- 初期パーツ配置 ---
     func setupStaticNodes() {
-        // 蛇口：水の発生源
+        // 🚰 初期蛇口
         faucet = SKLabelNode(text: "🚰")
         faucet.position = CGPoint(x: size.width / 2, y: size.height - 120)
         faucet.fontSize = 50
@@ -41,7 +38,7 @@ class GameScene: SKScene {
         faucet.physicsBody?.isDynamic = false
         addChild(faucet)
         
-        // 排水口：水を消す地点。移動はできるが自身は消滅しない。
+        // 🌀 渦巻き（削除・吸い込み地点）
         drain = SKLabelNode(text: "🌀")
         drain.position = CGPoint(x: size.width / 2, y: 150)
         drain.fontSize = 60
@@ -51,52 +48,15 @@ class GameScene: SKScene {
         addChild(drain)
     }
 
-    func setupInteractiveUI() {
-        // 説明用テキスト
-        let infoLabel = SKLabelNode(text: "スマホを傾けて水を流そう！ 🌀に運んで削除")
-        infoLabel.fontSize = 14
-        infoLabel.position = CGPoint(x: size.width / 2, y: 50)
-        infoLabel.name = "draggable_info"
-        infoLabel.physicsBody = SKPhysicsBody(rectangleOf: infoLabel.frame.size)
-        infoLabel.physicsBody?.isDynamic = false
-        addChild(infoLabel)
-
-        // 生成ボタン（ー）
-        let minusBtn = SKShapeNode(rectOf: CGSize(width: 80, height: 50), cornerRadius: 10)
-        minusBtn.fillColor = .blue.withAlphaComponent(0.8)
-        minusBtn.position = CGPoint(x: size.width / 2 - 60, y: size.height - 200)
-        minusBtn.name = "btn_bar"
-        let minusLabel = SKLabelNode(text: "ー")
-        minusLabel.verticalAlignmentMode = .center
-        minusBtn.addChild(minusLabel)
-        minusBtn.physicsBody = SKPhysicsBody(rectangleOf: CGSize(width: 80, height: 50))
-        minusBtn.physicsBody?.isDynamic = false
-        addChild(minusBtn)
-
-        // 生成ボタン（＋）
-        let plusBtn = SKShapeNode(rectOf: CGSize(width: 80, height: 50), cornerRadius: 10)
-        plusBtn.fillColor = .orange.withAlphaComponent(0.8)
-        plusBtn.position = CGPoint(x: size.width / 2 + 60, y: size.height - 200)
-        plusBtn.name = "btn_wheel"
-        let plusLabel = SKLabelNode(text: "＋")
-        plusLabel.verticalAlignmentMode = .center
-        plusBtn.addChild(plusLabel)
-        plusBtn.physicsBody = SKPhysicsBody(rectangleOf: CGSize(width: 80, height: 50))
-        plusBtn.physicsBody?.isDynamic = false
-        addChild(plusBtn)
-    }
-
-    // --- 水の生成（ユーザー案採用：物理判定より描画を大きくして重なりを表現） ---
-    func createWaterDrop() {
-        guard let fNode = childNode(withName: "draggable_faucet") else { return }
-        
-        let pRadius: CGFloat = 8  // 物理的な当たり判定
-        let vRadius: CGFloat = 12 // 見た目の大きさ（少し大きくして重なりを作る）
+    // 水の粒を生成（全蛇口から共通で呼び出し）
+    func createWaterDrop(from node: SKNode) {
+        let pRadius: CGFloat = 8
+        let vRadius: CGFloat = 12 // 物理半径より大きくして重なりを表現
         
         let water = SKShapeNode(circleOfRadius: vRadius)
-        water.fillColor = .cyan.withAlphaComponent(1.0)
+        water.fillColor = .cyan.withAlphaComponent(0.9)
         water.strokeColor = .clear
-        water.position = CGPoint(x: fNode.position.x, y: fNode.position.y - 35)
+        water.position = CGPoint(x: node.position.x, y: node.position.y - 35)
         
         let body = SKPhysicsBody(circleOfRadius: pRadius)
         body.friction = 0.01
@@ -106,40 +66,58 @@ class GameScene: SKScene {
         addChild(water)
     }
 
-    // --- 物理オブジェクト（棒・水車）の追加 ---
-    func addBar() {
-        let bar = SKSpriteNode(color: .lightGray, size: CGSize(width: 150, height: 20))
-        bar.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        bar.name = "draggable_bar"
-        bar.physicsBody = SKPhysicsBody(rectangleOf: bar.size)
-        bar.physicsBody?.isDynamic = false
-        addChild(bar)
-    }
-
-    func addWaterWheel() {
-        let wheel = SKNode()
-        wheel.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        wheel.name = "draggable_wheel"
-        let bSize = CGSize(width: 140, height: 15)
-        for i in 0..<2 {
-            let b = SKShapeNode(rectOf: bSize, cornerRadius: 4)
-            b.fillColor = .orange
-            b.zRotation = (CGFloat.pi / 2) * CGFloat(i)
-            wheel.addChild(b)
-        }
-        wheel.physicsBody = SKPhysicsBody(bodies: [
-            SKPhysicsBody(rectangleOf: bSize),
-            SKPhysicsBody(rectangleOf: CGSize(width: bSize.height, height: bSize.width))
-        ])
-        wheel.physicsBody?.isDynamic = true
-        addChild(wheel)
-        setupJoint(for: wheel)
-    }
-
-    // --- クラッシュ防止用：ジョイントとアンカーの安全な管理 ---
-    func setupJoint(for node: SKNode) {
-        removeAnchor(for: node) // 二重生成防止
+    // 【修正】確率に傾斜をつけたランダム生成
+    func spawnRandomObject(at pos: CGPoint) {
+        // 0〜6の乱数を生成（合計7つの枠）
+        // 0,1,2,3 -> 棒 (4/7)
+        // 4,5     -> 水車 (2/7)
+        // 6       -> 蛇口 (1/7)
+        let roll = Int.random(in: 0...6)
         
+        if roll <= 3 {
+            // --- 棒の生成 (一番多い) ---
+            let bar = SKSpriteNode(color: .lightGray, size: CGSize(width: 150, height: 20))
+            bar.position = pos
+            bar.name = "draggable_bar"
+            bar.physicsBody = SKPhysicsBody(rectangleOf: bar.size)
+            bar.physicsBody?.isDynamic = false
+            addChild(bar)
+            
+        } else if roll <= 5 {
+            // --- 水車の生成 (棒の半分) ---
+            let wheel = SKNode()
+            wheel.position = pos
+            wheel.name = "draggable_wheel"
+            let bSize = CGSize(width: 140, height: 15)
+            for i in 0..<2 {
+                let b = SKShapeNode(rectOf: bSize, cornerRadius: 4)
+                b.fillColor = .orange
+                b.zRotation = (CGFloat.pi / 2) * CGFloat(i)
+                wheel.addChild(b)
+            }
+            wheel.physicsBody = SKPhysicsBody(bodies: [
+                SKPhysicsBody(rectangleOf: bSize),
+                SKPhysicsBody(rectangleOf: CGSize(width: bSize.height, height: bSize.width))
+            ])
+            wheel.physicsBody?.isDynamic = true
+            addChild(wheel)
+            setupJoint(for: wheel)
+            
+        } else {
+            // --- 蛇口の生成 (水車の半分) ---
+            let newFaucet = SKLabelNode(text: "🚰")
+            newFaucet.position = pos
+            newFaucet.fontSize = 50
+            newFaucet.name = "draggable_faucet"
+            newFaucet.physicsBody = SKPhysicsBody(circleOfRadius: 25)
+            newFaucet.physicsBody?.isDynamic = false
+            addChild(newFaucet)
+        }
+    }
+
+    // 水車などの回転軸（ピン）を設定
+    func setupJoint(for node: SKNode) {
+        removeAnchor(for: node)
         let anchor = SKNode()
         anchor.position = node.position
         anchor.name = "anchor_\(node.hash)"
@@ -154,6 +132,7 @@ class GameScene: SKScene {
         }
     }
 
+    // 回転軸を安全に削除
     func removeAnchor(for node: SKNode) {
         let anchorName = "anchor_\(node.hash)"
         enumerateChildNodes(withName: anchorName) { a, _ in
@@ -161,16 +140,13 @@ class GameScene: SKScene {
         }
     }
 
-    // --- タッチ操作制御 ---
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first else { return }
         let loc = touch.location(in: self)
         let nodesAtPoint = nodes(at: loc)
         
-        if let target = nodesAtPoint.first(where: { $0.name?.contains("draggable") == true || $0.name?.contains("btn") == true }) {
-            if target.name == "btn_bar" { addBar() }
-            if target.name == "btn_wheel" { addWaterWheel() }
-            
+        // 既存パーツに触れた場合は移動、何もない場所なら生成
+        if let target = nodesAtPoint.first(where: { $0.name?.contains("draggable") == true }) {
             selectedNode = target
             selectedNode?.physicsBody?.isDynamic = false
             
@@ -182,6 +158,8 @@ class GameScene: SKScene {
                 initialTouchAngle = atan2(p2.y - p1.y, p2.x - p1.x)
                 initialNodeRotation = target.zRotation
             }
+        } else {
+            spawnRandomObject(at: loc)
         }
     }
 
@@ -206,7 +184,7 @@ class GameScene: SKScene {
         if let dNode = childNode(withName: "draggable_drain") {
             let dist = hypot(node.position.x - dNode.position.x, node.position.y - dNode.position.y)
             
-            // 🌀の近くで離したとき、🌀自体でなければ削除
+            // 渦巻き（🌀）に重なったら削除
             if dist < 65 && node.name != "draggable_drain" {
                 removeAnchor(for: node)
                 node.removeFromParent()
@@ -222,8 +200,8 @@ class GameScene: SKScene {
         selectedNode = nil
     }
 
-    // --- 毎フレームの更新処理（水の吸い込み判定） ---
     override func update(_ currentTime: TimeInterval) {
+        // 渦巻きによる水の吸い込み判定
         if let dNode = childNode(withName: "draggable_drain") {
             enumerateChildNodes(withName: "water") { w, _ in
                 if hypot(w.position.x - dNode.position.x, w.position.y - dNode.position.y) < 40 {
@@ -233,7 +211,7 @@ class GameScene: SKScene {
         }
     }
 
-    // --- 加速度センサー・生成管理 ---
+    // デバイスの傾きを物理重力に反映
     func startGravityUpdates() {
         if motionManager.isAccelerometerAvailable {
             motionManager.accelerometerUpdateInterval = 0.05
@@ -244,10 +222,16 @@ class GameScene: SKScene {
         }
     }
 
+    // すべての蛇口から水を出すループ
     func startWaterFlow() {
         let seq = SKAction.sequence([
             .wait(forDuration: 0.1),
-            .run { [weak self] in self?.createWaterDrop() }
+            .run { [weak self] in
+                guard let self = self else { return }
+                self.enumerateChildNodes(withName: "draggable_faucet") { node, _ in
+                    self.createWaterDrop(from: node)
+                }
+            }
         ])
         run(.repeatForever(seq))
     }
